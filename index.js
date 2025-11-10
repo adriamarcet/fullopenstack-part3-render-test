@@ -2,9 +2,7 @@ let persons = require('./data.json');
 let morgan = require('morgan');
 const express = require('express');
 const app = express();
-const cors = require('cors')
 
-app.use(cors());
 app.use(express.json());
 app.use(express.static('dist'))
 app.use(morgan('tiny'));
