@@ -1,7 +1,21 @@
-let persons = require('./data.json');
+require('dotenv').config()
+
+const Person = require('./models/person');
+const PORT = process.env.PORT;
+
 let morgan = require('morgan');
 const express = require('express');
 const app = express();
+
+const errorHandler = (error, request, response, next) => {
+    console.log('error.message ', error.message);
+
+    if(error.name === 'CastError') {
+        return response.status(400).send({ error: 'Custom error handler function says: Malformatted id' })
+    }
+
+    next(error)
+};
 
 app.use(express.json());
 app.use(express.static('dist'))
@@ -36,54 +50,69 @@ app.get('/', (request, response) => {
 });
 
 app.get('/api/persons', (request, response) => {
-    response.send(persons)
+    Person.find({}).then(persons => {
+        response.json(persons)
+    })
 })
 
 app.get('/info', (request, response) => {
-    const number_determinant = persons.length > 1 ? `people` : `person`;
-    const requestDate = new Date(Date.now()).toUTCString();
+    Person.countDocuments({})
+        .then(count => {
+            const number_determinant = count > 1 ? `people` : `person`;
+            const requestDate = new Date(Date.now()).toUTCString();
 
-    response.send(`
-        <p>Phonebook has info for ${persons.length} ${number_determinant}</p>
-        <p>${requestDate}</p>
-    `)
+            response.send(`
+                <p>Phonebook has info for ${count} ${number_determinant}</p>
+                <p>${requestDate}</p>
+            `)
+        })
 })
-
-const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
     console.log('server is running at port ', PORT);
 });
 
-app.get('/api/persons/:id', (request, response) => {
+app.get('/api/persons/:id', (request, response, next) => {
     const id = request.params.id;
-    const match = persons.find(person => person.id === id);
-
-    if(match) {
-        response.json(match)
-    } else {
-        response.status(404).end()
-    }
+    Person.findById(id)
+        .then(person => {
+            if(person) {
+                response.json(person)
+            } else {
+                response.status(404).end()
+            }
+        })
+        .catch(error => next(error))
 });
 
-app.delete('/api/persons/:id', (request, response) => {
+app.put('/api/persons/:id', (request, response, next) => {
+  const { name, number } = request.body
+
+  Person.findById(request.params.id)
+    .then(person => {
+      if (!person) {
+        return response.status(404).end()
+      }
+
+      person.name = name
+      person.number = number
+
+      return person.save().then((updatedPerson) => {
+        response.json(updatedPerson)
+      })
+    })
+    .catch(error => next(error))
+})
+
+app.delete('/api/persons/:id', (request, response, next) => {
     const id = request.params.id;
-
-    const match = persons.find(person => person.id === id);
-    if(match) {
-        persons = persons.filter(person => person.id !== id);
-        response.status(204).end()
-    } else {
-        response.status(404).end()
-    }
+    Person.findByIdAndDelete(id)
+        .then(result => {
+            response.status(204).end()
+        })
+        .catch(error => next(error))
+    ;
 });
-
-const generateId = () => {
-  const maxId = persons.length > 0
-    ? Math.max(...persons.map(n => Number(n.id)))
-    : 0
-  return String(maxId + 1)
-}
 
 app.post('/api/persons', (request, response) => {
     const body = request.body;
@@ -106,19 +135,28 @@ app.post('/api/persons', (request, response) => {
         })
     }
 
-    const nameMatch = persons.filter(person => person.name === body.name);
+    Person.findOne({ name: body.name }).then(existingPerson => {
+        if (existingPerson) {
+            return response.status(400).json({
+                error: "Given Name has an exact match"
+            })
+        }
 
-    if(nameMatch.length > 0) {
-        return response.status(400).json({
-            error: "Given Name has an exact match"
+        const person = new Person({
+            name: body.name,
+            number: body.number
         })
-    }
-    
-    const person = {
-        "name": body.name,
-        "number": body.number,
-        "id": generateId()
-    };
-    persons = persons.concat(person);
-    response.json(person)
+
+        person.save().then(savedPerson => {
+            response.json(savedPerson)
+        }).catch(error => {
+            console.error(error)
+            response.status(500).json({ error: 'saving failed' })
+        })
+    }).catch(error => {
+        console.error(error)
+        response.status(500).json({ error: 'lookup failed' })
+    })
 });
+
+app.use(errorHandler)
